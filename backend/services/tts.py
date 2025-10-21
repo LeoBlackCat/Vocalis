@@ -131,7 +131,10 @@ class TTSClient:
                     self._generate_fn(
                         generation_text=text,
                         model_name=model_name,
-                        output_path=temp_path  # This prevents auto-playback!
+                        output_path=temp_path,  # This prevents auto-playback!
+                        # quantization_bits=4   # keep it commented
+                        steps=8,                # very fast generation, draft quality
+                        cfg_strength=1
                     )
 
                 # Read the generated audio file

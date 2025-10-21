@@ -7,6 +7,9 @@ Handles communication with the local LLM API endpoint.
 import json
 import requests
 import logging
+import os
+from datetime import datetime
+from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 # Configure logging
@@ -27,29 +30,35 @@ class LLMClient:
         model: str = "default",
         temperature: float = 0.7,
         max_tokens: int = 2048,
-        timeout: int = 60
+        timeout: int = 60,
+        log_dir: str = "logs"
     ):
         """
         Initialize the LLM client.
-        
+
         Args:
             api_endpoint: URL of the local LLM API
             model: Model name to use (or 'default' for API default)
             temperature: Sampling temperature (0.0 to 1.0)
             max_tokens: Maximum tokens to generate
             timeout: Request timeout in seconds
+            log_dir: Directory to store request/response logs
         """
         self.api_endpoint = api_endpoint
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.timeout = timeout
-        
+        self.log_dir = log_dir
+
+        # Create log directory if it doesn't exist
+        Path(self.log_dir).mkdir(parents=True, exist_ok=True)
+
         # State tracking
         self.is_processing = False
         self.conversation_history = []
-        
-        logger.info(f"Initialized LLM Client with endpoint={api_endpoint}")
+
+        logger.info(f"Initialized LLM Client with endpoint={api_endpoint}, log_dir={log_dir}")
         
     def add_to_history(self, role: str, content: str) -> None:
         """
@@ -129,33 +138,54 @@ class LLMClient:
             # Remove None values
             payload = {k: v for k, v in payload.items() if v is not None}
             
+            # Generate timestamp for log files
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]  # milliseconds precision
+
             # Log the full payload (truncated for readability)
-            payload_str = json.dumps(payload)
+            payload_str = json.dumps(payload, indent=2)
             logger.info(f"Sending request to LLM API with {len(messages)} messages")
-            
+
             # Add more detailed logging to help debug message duplication
             message_roles = [msg["role"] for msg in messages]
             user_message_count = message_roles.count("user")
             logger.info(f"Message roles: {message_roles}, user messages: {user_message_count}")
-            
+
             if len(payload_str) > 500:
                 logger.debug(f"Payload (truncated): {payload_str[:500]}...")
             else:
                 logger.debug(f"Payload: {payload_str}")
-            
+
+            # Write request to log file
+            request_log_path = os.path.join(self.log_dir, f"{timestamp}_request.json")
+            try:
+                with open(request_log_path, 'w', encoding='utf-8') as f:
+                    f.write(payload_str)
+                logger.debug(f"Request logged to: {request_log_path}")
+            except Exception as e:
+                logger.error(f"Failed to write request log: {e}")
+
             # Send request to LLM API
             response = requests.post(
                 self.api_endpoint,
                 json=payload,
                 timeout=self.timeout
             )
-            
+
             # Check if request was successful
             response.raise_for_status()
-            
+
             # Parse response
             result = response.json()
-            
+
+            # Write response to log file
+            response_log_path = os.path.join(self.log_dir, f"{timestamp}_response.json")
+            try:
+                with open(response_log_path, 'w', encoding='utf-8') as f:
+                    json.dump(result, f, indent=2, ensure_ascii=False)
+                logger.debug(f"Response logged to: {response_log_path}")
+            except Exception as e:
+                logger.error(f"Failed to write response log: {e}")
+
             # Extract assistant response
             assistant_message = result.get("choices", [{}])[0].get("message", {}).get("content", "")
             

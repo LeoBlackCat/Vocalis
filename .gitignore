@@ -6,3 +6,6 @@ frontend/node_modules/
 *.env
 backend/.env
 
+# LLM API logs
+logs/
+*.log
