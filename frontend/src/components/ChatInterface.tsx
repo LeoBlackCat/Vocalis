@@ -536,7 +536,9 @@ const ChatInterface: React.FC = () => {
     };
   }, [assistantState]);
   
-  // Handle silent follow-up timer
+  // DISABLED: Silent follow-up timer
+  // This feature has been disabled as per user request
+  // The assistant will now wait for user input instead of sending automatic follow-up messages
   useEffect(() => {
     // Clear any timer when the state changes to processing, speaking, or greeting
     if (assistantState === 'processing' || assistantState === 'speaking' || assistantState === 'greeting') {
@@ -546,22 +548,25 @@ const ChatInterface: React.FC = () => {
         setFollowUpTimer(null);
       }
     }
-    
+
     // When call is reactivated, allow follow-ups again
     if (callActive && preventFollowUp) {
       setPreventFollowUp(false);
     }
-    
+
+    // DISABLED: Silent follow-up logic
+    // The following code block has been commented out to disable automatic follow-ups
+    /*
     // Only start a timer when assistant becomes idle after speaking AND is not processing
     // AND when follow-ups are allowed (not immediately after ending a call)
     if (assistantState === 'idle' && previousAssistantState === 'speaking' && !preventFollowUp) {
       console.log('Assistant became idle after speaking - preparing follow-up timer');
-      
+
       // Clear any existing timer
       if (followUpTimer) {
         clearTimeout(followUpTimer);
       }
-      
+
       // Adjust delay based on tier for a more natural conversation cadence
       // Shorter delays for more responsive follow-ups
       const minDelay = 2000 + (followUpTier * 1000); // 2s -> 3s -> 4s
@@ -569,26 +574,26 @@ const ChatInterface: React.FC = () => {
       const randomDelay = Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;
 
       console.log(`Setting silent follow-up timer for ${randomDelay}ms (tier ${followUpTier + 1})`);
-      
+
       // Create new timer
       const timer = setTimeout(() => {
         // When timer fires, check if we're still in a state where a follow-up makes sense
         // If we've moved to processing, speaking, or greeting in the meantime, we should abort
-        if (assistantState === 'processing' || assistantState === 'speaking' || 
+        if (assistantState === 'processing' || assistantState === 'speaking' ||
             assistantState === 'greeting' || preventFollowUp) {
           console.log(`Follow-up timer fired but state is now ${assistantState} - aborting follow-up`);
           return;
         }
-        
+
         // Start a brief "listening window" to detect any just-started speech
         console.log(`Follow-up timer fired, starting pre-follow-up listening window (${followUpTier + 1})...`);
-        
+
         // Create a listening window of 800ms
         // This gives time for any just-started speech to be detected before sending follow-up
         const listeningWindow = setTimeout(() => {
           // After listening window, check conditions again
           const audioState = audioService.getAudioState();
-          
+
           // Multiple checks to ensure we should REALLY send a follow-up:
           // 1. We must be in idle state (not processing or speaking)
           // 2. No potential speech activity detected (lower threshold than full listening)
@@ -596,17 +601,17 @@ const ChatInterface: React.FC = () => {
           // 4. Audio must be inactive (not recording or playing)
           // 5. Follow-ups must not be prevented by recent call end
           if (
-            assistantState === 'idle' && 
+            assistantState === 'idle' &&
             assistantState !== 'processing' &&  // Double-check processing state
             !potentialSpeechActivity &&  // No audio activity (even low-level background noise)
-            isConnected && 
+            isConnected &&
             audioState === AudioState.INACTIVE &&
             !preventFollowUp  // Make sure follow-ups are allowed
           ) {
             console.log(`No speech detected during listening window, sending follow-up (tier ${followUpTier + 1})`);
             console.log(`Final audio state check: ${audioState}`);
             websocketService.sendSilentFollowUp(followUpTier);
-            
+
             // Increment tier for next time (cycle through 0-2)
             setFollowUpTier((prevTier) => (prevTier + 1) % 3);
           } else {
@@ -614,31 +619,32 @@ const ChatInterface: React.FC = () => {
             console.log(`State that prevented follow-up: assistantState=${assistantState}, audioState=${audioState}, preventFollowUp=${preventFollowUp}`);
           }
         }, 800); // 800ms listening window
-        
+
         // Store the listening window timer reference for cleanup
         const currentListeningWindow = listeningWindow;
-        
+
         // Update component cleanup to clear both timers
         return () => {
           clearTimeout(currentListeningWindow);
         };
       }, randomDelay);
-      
+
       setFollowUpTimer(timer);
     }
-    
+    */
+
     // If the user starts interacting (recording), clear timer and reset tier
     if (assistantState === 'listening') {
       // Reset tier counter when user speaks
       setFollowUpTier(0);
-      
+
       // Clear any timer
       if (followUpTimer) {
         clearTimeout(followUpTimer);
         setFollowUpTimer(null);
       }
     }
-    
+
     // Cleanup function
     return () => {
       if (followUpTimer) {

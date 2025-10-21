@@ -122,10 +122,6 @@ class WebSocketManager:
             "If you don't know something, admit it rather than making up an answer"
             "\n\n"
             "Through the webapp, you can receive and understand photographs and pictures."
-            "\n\n"
-            "When the user sends a message like '[silent]', '[no response]', or '[still waiting]', it means they've gone quiet or haven't responded."
-            "When you see these signals, continue the conversation naturally based on the previous topic and context."
-            "Stay on topic, be helpful, and don't mention that they were silent - just carry on the conversation as if you're gently following up."
         )
         
         try:
@@ -1186,8 +1182,7 @@ class WebSocketManager:
             logger.info("Processing vision image with SmolVLM")
             
             # Import vision service (to avoid circular imports)
-            from ..services.vision import vision_service
-            
+            from ..services.vision import vision_service            
             # Create a descriptive prompt for the image
             prompt = "Describe this image in detail. Include information about objects, people, scenes, text, and any notable elements."
             
