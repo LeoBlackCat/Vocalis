@@ -320,15 +320,18 @@ class WebSocketManager:
                 llm_response = self.llm_client.get_response(transcript, self.system_prompt)
             
             # Send LLM response
+            response_text = llm_response["text"]
+            logger.info(f"LLM response ({len(response_text)} chars): {response_text[:100]}{'...' if len(response_text) > 100 else ''}")
+            
             await websocket.send_json({
                 "type": MessageType.LLM_RESPONSE,
-                "text": llm_response["text"],
+                "text": response_text,
                 "metadata": {k: v for k, v in llm_response.items() if k != "text"},
                 "timestamp": datetime.now().isoformat()
             })
             
             # Generate and send TTS audio
-            await self._send_tts_response(websocket, llm_response["text"])
+            await self._send_tts_response(websocket, response_text)
             
         except Exception as e:
             logger.error(f"Error processing speech segment: {e}")

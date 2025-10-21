@@ -14,15 +14,16 @@ load_dotenv()
 
 # API Endpoints
 LLM_API_ENDPOINT = os.getenv("LLM_API_ENDPOINT", "http://127.0.0.1:1234/v1/chat/completions")
-TTS_API_ENDPOINT = os.getenv("TTS_API_ENDPOINT", "http://localhost:5005/v1/audio/speech")
 
 # Whisper Model Configuration
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "tiny.en")
 
-# TTS Configuration
-TTS_MODEL = os.getenv("TTS_MODEL", "tts-1")
-TTS_VOICE = os.getenv("TTS_VOICE", "tara")
+# TTS Configuration (F5-TTS-MLX)
+TTS_MODEL = os.getenv("TTS_MODEL", "F5-TTS")  # F5-TTS or E2-TTS
+TTS_VOICE_FILE = os.getenv("TTS_VOICE_FILE", "")  # Path to reference audio for voice cloning
+TTS_VOICE_TEXT = os.getenv("TTS_VOICE_TEXT", "")  # Transcript of reference audio
 TTS_FORMAT = os.getenv("TTS_FORMAT", "wav")
+TTS_SAMPLE_RATE = int(os.getenv("TTS_SAMPLE_RATE", 24000))
 
 # WebSocket Server Configuration
 WEBSOCKET_HOST = os.getenv("WEBSOCKET_HOST", "0.0.0.0")
@@ -42,11 +43,12 @@ def get_config() -> Dict[str, Any]:
     """
     return {
         "llm_api_endpoint": LLM_API_ENDPOINT,
-        "tts_api_endpoint": TTS_API_ENDPOINT,
         "whisper_model": WHISPER_MODEL,
         "tts_model": TTS_MODEL,
-        "tts_voice": TTS_VOICE,
+        "tts_voice_file": TTS_VOICE_FILE,
+        "tts_voice_text": TTS_VOICE_TEXT,
         "tts_format": TTS_FORMAT,
+        "tts_sample_rate": TTS_SAMPLE_RATE,
         "websocket_host": WEBSOCKET_HOST,
         "websocket_port": WEBSOCKET_PORT,
         "vad_threshold": VAD_THRESHOLD,

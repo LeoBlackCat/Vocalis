@@ -1,16 +1,18 @@
 """
 Text-to-Speech Service
 
-Handles communication with the local TTS API endpoint.
+Handles text-to-speech generation using F5-TTS-MLX.
 """
 
 import json
-import requests
 import logging
 import io
 import time
 import base64
 import asyncio
+import numpy as np
+import soundfile as sf
+from pathlib import Path
 from typing import Dict, Any, List, Optional, BinaryIO, Generator, AsyncGenerator
 
 # Configure logging
@@ -19,52 +21,61 @@ logger = logging.getLogger(__name__)
 
 class TTSClient:
     """
-    Client for communicating with a local TTS API.
+    Client for F5-TTS-MLX text-to-speech generation.
     
-    This class handles requests to a locally hosted TTS API that follows
-    the OpenAI API format for text-to-speech generation.
+    This class handles local TTS generation using F5-TTS with MLX on Apple Silicon.
     """
     
     def __init__(
         self,
-        api_endpoint: str = "http://localhost:5005/v1/audio/speech",
-        model: str = "tts-1",
-        voice: str = "tara",
+        model: str = "F5-TTS",
+        voice_file: Optional[str] = None,
+        voice_text: Optional[str] = None,
         output_format: str = "wav",
-        speed: float = 1.0,
-        timeout: int = 60,
+        sample_rate: int = 24000,
         chunk_size: int = 4096
     ):
         """
-        Initialize the TTS client.
+        Initialize the F5-TTS-MLX client.
         
         Args:
-            api_endpoint: URL of the local TTS API
-            model: TTS model name to use
-            voice: Voice to use for synthesis
-            output_format: Output audio format (mp3, opus, aac, flac)
-            speed: Speech speed multiplier (0.25 to 4.0)
-            timeout: Request timeout in seconds
+            model: TTS model name to use (F5-TTS or E2-TTS)
+            voice_file: Path to reference audio file for voice cloning (optional)
+            voice_text: Transcript of the reference audio (optional)
+            output_format: Output audio format (wav, mp3)
+            sample_rate: Audio sample rate (default: 24000)
             chunk_size: Size of audio chunks to stream in bytes
         """
-        self.api_endpoint = api_endpoint
         self.model = model
-        self.voice = voice
+        self.voice_file = voice_file
+        self.voice_text = voice_text
         self.output_format = output_format
-        self.speed = speed
-        self.timeout = timeout
+        self.sample_rate = sample_rate
         self.chunk_size = chunk_size
         
         # State tracking
         self.is_processing = False
         self.last_processing_time = 0
+        self._tts_model = None
         
-        logger.info(f"Initialized TTS Client with endpoint={api_endpoint}, "
-                   f"model={model}, voice={voice}")
+        logger.info(f"Initialized F5-TTS-MLX Client with model={model}, sample_rate={sample_rate}")
+    
+    def _load_model(self):
+        """Lazy load the F5-TTS model."""
+        if self._tts_model is None:
+            try:
+                from f5_tts_mlx.generate import generate
+                self._generate_fn = generate
+                logger.info("F5-TTS-MLX model loaded successfully")
+            except ImportError as e:
+                logger.error(f"Failed to import f5_tts_mlx: {e}")
+                raise ImportError(
+                    "f5-tts-mlx not installed. Install with: pip install f5-tts-mlx"
+                )
     
     def text_to_speech(self, text: str) -> bytes:
         """
-        Convert text to speech audio.
+        Convert text to speech audio using F5-TTS-MLX.
         
         Args:
             text: Text to convert to speech
@@ -76,50 +87,69 @@ class TTSClient:
         start_time = time.time()
         
         try:
-            # Prepare request payload
-            payload = {
-                "model": self.model,
-                "input": text,
-                "voice": self.voice,
-                "response_format": self.output_format,
-                "speed": self.speed
+            # Load model if not already loaded
+            self._load_model()
+            
+            logger.info(f"Generating TTS for {len(text)} characters of text")
+            
+            # Map model name to full model path
+            model_map = {
+                "F5-TTS": "lucasnewman/f5-tts-mlx",
+                "E2-TTS": "lucasnewman/e2-tts-mlx"
             }
+            model_name = model_map.get(self.model, "lucasnewman/f5-tts-mlx")
             
-            logger.info(f"Sending TTS request with {len(text)} characters of text")
+            # Generate audio using F5-TTS
+            # If voice cloning is configured, use reference audio
+            # Check for non-empty strings and strip whitespace
+            has_voice_file = self.voice_file and self.voice_file.strip()
+            has_voice_text = self.voice_text and self.voice_text.strip()
             
-            # Send request to TTS API
-            response = requests.post(
-                self.api_endpoint,
-                json=payload,
-                timeout=self.timeout
-            )
+            if has_voice_file and has_voice_text:
+                logger.info(f"Using voice cloning with reference: {self.voice_file}")
+                result = self._generate_fn(
+                    generation_text=text,
+                    ref_audio_path=self.voice_file.strip(),
+                    ref_audio_text=self.voice_text.strip(),
+                    model_name=model_name
+                )
+            else:
+                # Use default voice
+                logger.info("Using default voice (no voice cloning)")
+                result = self._generate_fn(
+                    generation_text=text,
+                    model_name=model_name
+                )
             
-            # Check if request was successful
-            response.raise_for_status()
+            # The generate function returns (audio_array, sample_rate)
+            if isinstance(result, tuple):
+                audio_array, actual_sample_rate = result
+            else:
+                audio_array = result
+                actual_sample_rate = self.sample_rate
             
-            # Get audio content
-            audio_data = response.content
+            # Convert numpy array to audio bytes
+            audio_buffer = io.BytesIO()
+            sf.write(audio_buffer, audio_array, actual_sample_rate, format='WAV')
+            audio_data = audio_buffer.getvalue()
             
             # Calculate processing time
             self.last_processing_time = time.time() - start_time
             
-            logger.info(f"Received TTS response after {self.last_processing_time:.2f}s, "
+            logger.info(f"Generated TTS audio after {self.last_processing_time:.2f}s, "
                        f"size: {len(audio_data)} bytes")
             
             return audio_data
             
-        except requests.RequestException as e:
-            logger.error(f"TTS API request error: {e}")
-            raise
         except Exception as e:
-            logger.error(f"TTS processing error: {e}")
+            logger.error(f"TTS generation error: {e}")
             raise
         finally:
             self.is_processing = False
     
     def stream_text_to_speech(self, text: str) -> Generator[bytes, None, None]:
         """
-        Stream audio data from the TTS API.
+        Stream audio data by generating complete audio and chunking it.
         
         Args:
             text: Text to convert to speech
@@ -131,52 +161,23 @@ class TTSClient:
         start_time = time.time()
         
         try:
-            # Prepare request payload
-            payload = {
-                "model": self.model,
-                "input": text,
-                "voice": self.voice,
-                "response_format": self.output_format,
-                "speed": self.speed
-            }
+            logger.info(f"Generating streaming TTS for {len(text)} characters of text")
             
-            logger.info(f"Sending streaming TTS request with {len(text)} characters of text")
+            # Generate complete audio
+            audio_data = self.text_to_speech(text)
             
-            # Send request to TTS API
-            with requests.post(
-                self.api_endpoint,
-                json=payload,
-                timeout=self.timeout,
-                stream=True
-            ) as response:
-                response.raise_for_status()
-                
-                # Check if streaming is supported by the API
-                is_chunked = response.headers.get('transfer-encoding', '') == 'chunked'
-                
-                if is_chunked:
-                    # The API supports streaming
-                    for chunk in response.iter_content(chunk_size=self.chunk_size):
-                        if chunk:
-                            yield chunk
-                else:
-                    # The API doesn't support streaming, but we'll fake it by
-                    # splitting the response into chunks
-                    audio_data = response.content
-                    total_chunks = (len(audio_data) + self.chunk_size - 1) // self.chunk_size
-                    
-                    for i in range(total_chunks):
-                        start_idx = i * self.chunk_size
-                        end_idx = min(start_idx + self.chunk_size, len(audio_data))
-                        yield audio_data[start_idx:end_idx]
-                
+            # Split into chunks and yield
+            total_chunks = (len(audio_data) + self.chunk_size - 1) // self.chunk_size
+            
+            for i in range(total_chunks):
+                start_idx = i * self.chunk_size
+                end_idx = min(start_idx + self.chunk_size, len(audio_data))
+                yield audio_data[start_idx:end_idx]
+            
             # Calculate processing time
             self.last_processing_time = time.time() - start_time
             logger.info(f"Completed TTS streaming after {self.last_processing_time:.2f}s")
             
-        except requests.RequestException as e:
-            logger.error(f"TTS API streaming request error: {e}")
-            raise
         except Exception as e:
             logger.error(f"TTS streaming error: {e}")
             raise
@@ -216,12 +217,11 @@ class TTSClient:
             Dict containing the current configuration
         """
         return {
-            "api_endpoint": self.api_endpoint,
             "model": self.model,
-            "voice": self.voice,
+            "voice_file": self.voice_file,
+            "voice_text": self.voice_text,
             "output_format": self.output_format,
-            "speed": self.speed,
-            "timeout": self.timeout,
+            "sample_rate": self.sample_rate,
             "chunk_size": self.chunk_size,
             "is_processing": self.is_processing,
             "last_processing_time": self.last_processing_time

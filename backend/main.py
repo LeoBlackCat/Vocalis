@@ -59,12 +59,13 @@ async def lifespan(app: FastAPI):
         api_endpoint=cfg["llm_api_endpoint"]
     )
     
-    # Initialize TTS service
+    # Initialize TTS service (F5-TTS-MLX)
     tts_service = TTSClient(
-        api_endpoint=cfg["tts_api_endpoint"],
         model=cfg["tts_model"],
-        voice=cfg["tts_voice"],
-        output_format=cfg["tts_format"]
+        voice_file=cfg["tts_voice_file"] if cfg["tts_voice_file"] else None,
+        voice_text=cfg["tts_voice_text"] if cfg["tts_voice_text"] else None,
+        output_format=cfg["tts_format"],
+        sample_rate=cfg["tts_sample_rate"]
     )
     
     # Initialize vision service (will download model if not cached)
@@ -129,7 +130,7 @@ async def health_check():
         },
         "config": {
             "whisper_model": config.WHISPER_MODEL,
-            "tts_voice": config.TTS_VOICE,
+            "tts_model": config.TTS_MODEL,
             "websocket_port": config.WEBSOCKET_PORT
         }
     }
