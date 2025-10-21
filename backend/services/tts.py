@@ -12,6 +12,8 @@ import base64
 import asyncio
 import numpy as np
 import soundfile as sf
+import tempfile
+import os
 from pathlib import Path
 from typing import Dict, Any, List, Optional, BinaryIO, Generator, AsyncGenerator
 
@@ -56,13 +58,13 @@ class TTSClient:
         # State tracking
         self.is_processing = False
         self.last_processing_time = 0
-        self._tts_model = None
+        self._generate_fn = None
         
         logger.info(f"Initialized F5-TTS-MLX Client with model={model}, sample_rate={sample_rate}")
     
     def _load_model(self):
         """Lazy load the F5-TTS model."""
-        if self._tts_model is None:
+        if self._generate_fn is None:
             try:
                 from f5_tts_mlx.generate import generate
                 self._generate_fn = generate
@@ -100,42 +102,54 @@ class TTSClient:
             model_name = model_map.get(self.model, "lucasnewman/f5-tts-mlx")
             
             # Generate audio using F5-TTS
-            # If voice cloning is configured, use reference audio
-            # Check for non-empty strings and strip whitespace
-            has_voice_file = self.voice_file and self.voice_file.strip()
-            has_voice_text = self.voice_text and self.voice_text.strip()
-            
-            if has_voice_file and has_voice_text:
-                logger.info(f"Using voice cloning with reference: {self.voice_file}")
-                result = self._generate_fn(
-                    generation_text=text,
-                    ref_audio_path=self.voice_file.strip(),
-                    ref_audio_text=self.voice_text.strip(),
-                    model_name=model_name
-                )
-            else:
-                # Use default voice
-                logger.info("Using default voice (no voice cloning)")
-                result = self._generate_fn(
-                    generation_text=text,
-                    model_name=model_name
-                )
-            
-            # The generate function returns (audio_array, sample_rate)
-            if isinstance(result, tuple):
-                audio_array, actual_sample_rate = result
-            else:
-                audio_array = result
-                actual_sample_rate = self.sample_rate
-            
-            # Convert numpy array to audio bytes
-            audio_buffer = io.BytesIO()
-            sf.write(audio_buffer, audio_array, actual_sample_rate, format='WAV')
-            audio_data = audio_buffer.getvalue()
-            
+            # F5-TTS generate() doesn't return audio - it either plays or saves to file
+            # We need to specify output_path to prevent auto-playback and get the audio file
+
+            # Create a temporary file for the audio output
+            temp_fd, temp_path = tempfile.mkstemp(suffix='.wav')
+            os.close(temp_fd)  # Close the file descriptor, we'll use the path
+
+            try:
+                # Check for non-empty strings and strip whitespace
+                has_voice_file = self.voice_file and self.voice_file.strip()
+                has_voice_text = self.voice_text and self.voice_text.strip()
+
+                logger.info(f"Generating audio to temporary file: {temp_path}")
+
+                if has_voice_file and has_voice_text:
+                    logger.info(f"Using voice cloning with reference: {self.voice_file}")
+                    self._generate_fn(
+                        generation_text=text,
+                        ref_audio_path=self.voice_file.strip(),
+                        ref_audio_text=self.voice_text.strip(),
+                        model_name=model_name,
+                        output_path=temp_path  # This prevents auto-playback!
+                    )
+                else:
+                    # Use default voice
+                    logger.info("Using default voice (no voice cloning)")
+                    self._generate_fn(
+                        generation_text=text,
+                        model_name=model_name,
+                        output_path=temp_path  # This prevents auto-playback!
+                    )
+
+                # Read the generated audio file
+                logger.info(f"Reading generated audio from: {temp_path}")
+                with open(temp_path, 'rb') as f:
+                    audio_data = f.read()
+
+                logger.info(f"Successfully read audio file: {len(audio_data)} bytes")
+
+            finally:
+                # Clean up the temporary file
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
+                    logger.info(f"Cleaned up temporary file: {temp_path}")
+
             # Calculate processing time
             self.last_processing_time = time.time() - start_time
-            
+
             logger.info(f"Generated TTS audio after {self.last_processing_time:.2f}s, "
                        f"size: {len(audio_data)} bytes")
             
@@ -157,13 +171,10 @@ class TTSClient:
         Yields:
             Chunks of audio data
         """
-        self.is_processing = True
-        start_time = time.time()
-        
         try:
-            logger.info(f"Generating streaming TTS for {len(text)} characters of text")
+            logger.info(f"Streaming TTS for {len(text)} characters of text")
             
-            # Generate complete audio
+            # Generate complete audio (this already handles is_processing flag)
             audio_data = self.text_to_speech(text)
             
             # Split into chunks and yield
@@ -174,15 +185,11 @@ class TTSClient:
                 end_idx = min(start_idx + self.chunk_size, len(audio_data))
                 yield audio_data[start_idx:end_idx]
             
-            # Calculate processing time
-            self.last_processing_time = time.time() - start_time
-            logger.info(f"Completed TTS streaming after {self.last_processing_time:.2f}s")
+            logger.info(f"Completed TTS streaming")
             
         except Exception as e:
             logger.error(f"TTS streaming error: {e}")
             raise
-        finally:
-            self.is_processing = False
     
     async def async_text_to_speech(self, text: str) -> bytes:
         """
@@ -197,17 +204,13 @@ class TTSClient:
         Returns:
             Complete audio data as bytes
         """
-        self.is_processing = True
-        
         try:
-            # Get complete audio data
+            # Get complete audio data (text_to_speech already handles is_processing flag)
             audio_data = await asyncio.to_thread(self.text_to_speech, text)
             return audio_data
         except Exception as e:
             logger.error(f"Async TTS error: {e}")
             raise
-        finally:
-            self.is_processing = False
     
     def get_config(self) -> Dict[str, Any]:
         """

@@ -493,30 +493,29 @@ export class AudioService {
   public async playAudioChunk(base64AudioChunk: string, format: string = 'wav'): Promise<void> {
     try {
       await this.initAudioContext();
-      
+
       if (!this.audioContext) {
         throw new Error('AudioContext not initialized');
       }
-      
+
       // Convert base64 to ArrayBuffer
       const audioData = WebSocketService.base64ToArrayBuffer(base64AudioChunk);
-      
       console.log(`Received complete audio file (${audioData.byteLength} bytes)`);
-      
+
       // Decode the audio data
       try {
         const audioBuffer = await this.audioContext.decodeAudioData(audioData);
-        
+
         // Add to queue (instead of immediate playback)
         this.audioQueue.push(audioBuffer);
-        
+
         // Start playback if not already playing
         if (!this.isPlaying) {
           this.playNextChunk();
         } else {
           console.log(`Added audio buffer to queue: duration=${audioBuffer.duration.toFixed(2)}s`);
         }
-        
+
       } catch (error) {
         console.error('Error decoding audio data:', error);
         this.dispatchEvent(AudioEvent.AUDIO_ERROR, { error });
@@ -532,7 +531,7 @@ export class AudioService {
    */
   private playNextChunk(): void {
     console.log(`>> playNextChunk called. Queue length: ${this.audioQueue.length}, isPlaying: ${this.isPlaying}, isSpeaking: ${this.isSpeaking}`);
-    
+
     if (this.audioQueue.length === 0) {
       this.isPlaying = false;
       this.isSpeaking = false;
@@ -543,23 +542,23 @@ export class AudioService {
       console.log('Audio queue empty, playback complete');
       return;
     }
-    
+
     if (!this.audioContext) return;
-    
+
     const buffer = this.audioQueue.shift();
     if (!buffer) return;
-    
+
     // Set playback state - only dispatch PLAYBACK_START on the first buffer
     const wasPlaying = this.isPlaying;
     this.isPlaying = true;
     this.isSpeaking = true;
     this.audioState = AudioState.SPEAKING;
-    
+
     // Create source node
     const source = this.audioContext.createBufferSource();
     source.buffer = buffer;
     source.connect(this.audioContext.destination);
-    
+
     // Handle when this chunk ends
     source.onended = () => {
       console.log(`Buffer playback ended. Queue length: ${this.audioQueue.length}`);
@@ -578,15 +577,15 @@ export class AudioService {
         console.log('Last audio chunk complete, playback ended');
       }
     };
-    
+
     // Keep track of current source for stopping
     this.currentSource = source;
-    
+
     // Start playback with a small delay
     source.start(this.audioContext.currentTime + 0.05);
-    
+
     console.log(`Playing audio buffer: duration=${buffer.duration.toFixed(2)}s, queue remaining: ${this.audioQueue.length}`);
-    
+
     // Dispatch playback start event only if we weren't already playing
     if (!wasPlaying) {
       console.log('First chunk in sequence - dispatching PLAYBACK_START event');

@@ -474,7 +474,7 @@ export class WebSocketService {
     try {
       const message = JSON.parse(event.data);
       const type = message.type as WebSocketEventType;
-      
+
       // Acknowledge pings but DON'T send pong responses
       // Backend doesn't handle pong messages well
       if (message.type === 'ping') {
@@ -482,13 +482,13 @@ export class WebSocketService {
         console.debug('Received ping from server');
         return;
       }
-      
+
       // Silently ignore pong messages as they're just connection keepalive responses
       if (message.type === 'pong') {
         console.debug('Received pong response');
         return;
       }
-      
+
       // Notify listeners
       this.notifyListeners(type, message);
     } catch (error) {

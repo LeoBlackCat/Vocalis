@@ -20,6 +20,8 @@ from ..services.llm import LLMClient
 from ..services.tts import TTSClient
 from ..services.conversation_storage import ConversationStorage
 
+import time
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -352,6 +354,9 @@ class WebSocketManager:
             return
         
         try:
+            # Log a concise preview and length
+            logger.info(f"Generating TTS audio for ({len(text)} chars): {text[:100]}{'...' if len(text) > 100 else ''}")
+
             # Signal TTS start
             await websocket.send_json({
                 "type": MessageType.TTS_START,
@@ -361,13 +366,25 @@ class WebSocketManager:
             await self._send_status(websocket, "generating_speech", {})
             
             # Get the complete audio file
+            start_time = time.perf_counter()
             audio_data = await self.tts_client.async_text_to_speech(text)
-            
+            elapsed = time.perf_counter() - start_time
+
+            # Determine size (handle bytes or filepath string)
+            if isinstance(audio_data, (bytes, bytearray)):
+                size_bytes = len(audio_data)
+            elif isinstance(audio_data, str) and os.path.exists(audio_data):
+                size_bytes = os.path.getsize(audio_data)
+            else:
+                size_bytes = 0
+
+            logger.info(f"TTS generation completed in {elapsed:.3f}s; generated audio size: {size_bytes} bytes")
+
             # Check if playback should be interrupted
             if self.interrupt_playback.is_set():
                 logger.info("TTS generation interrupted")
                 return
-            
+
             # Encode and send the complete audio file
             encoded_audio = base64.b64encode(audio_data).decode("utf-8")
             await websocket.send_json({
@@ -564,16 +581,20 @@ class WebSocketManager:
             # This ensures the LLM knows the user's name in subsequent interactions
             self._initialize_conversation_context()
             
+            # Log the greeting response
+            greeting_text = llm_response["text"]
+            logger.info(f"Greeting response ({len(greeting_text)} chars): {greeting_text[:100]}{'...' if len(greeting_text) > 100 else ''}")
+            
             # Send LLM response
             await websocket.send_json({
                 "type": MessageType.LLM_RESPONSE,
-                "text": llm_response["text"],
+                "text": greeting_text,
                 "metadata": {k: v for k, v in llm_response.items() if k != "text"},
                 "timestamp": datetime.now().isoformat()
             })
             
             # Generate and send TTS audio
-            await self._send_tts_response(websocket, llm_response["text"])
+            await self._send_tts_response(websocket, greeting_text)
             
         except Exception as e:
             logger.error(f"Error generating greeting: {e}")
@@ -619,16 +640,20 @@ class WebSocketManager:
             # Restore original conversation history
             self.llm_client.conversation_history = full_history
             
+            # Log the followup response
+            followup_text = llm_response["text"]
+            logger.info(f"Followup response ({len(followup_text)} chars): {followup_text[:100]}{'...' if len(followup_text) > 100 else ''}")
+            
             # Send LLM response
             await websocket.send_json({
                 "type": MessageType.LLM_RESPONSE,
-                "text": llm_response["text"],
+                "text": followup_text,
                 "metadata": {k: v for k, v in llm_response.items() if k != "text"},
                 "timestamp": datetime.now().isoformat()
             })
             
             # Generate and send TTS audio
-            await self._send_tts_response(websocket, llm_response["text"])
+            await self._send_tts_response(websocket, followup_text)
             
         except Exception as e:
             logger.error(f"Error generating silent follow-up: {e}")
