@@ -59,9 +59,11 @@ async def lifespan(app: FastAPI):
         api_endpoint=cfg["llm_api_endpoint"]
     )
     
-    # Initialize TTS service (F5-TTS-MLX)
+    # Initialize TTS service
     tts_service = TTSClient(
+        engine=cfg["tts_engine"],
         model=cfg["tts_model"],
+        voice=cfg["tts_voice"],
         voice_file=cfg["tts_voice_file"] if cfg["tts_voice_file"] else None,
         voice_text=cfg["tts_voice_text"] if cfg["tts_voice_text"] else None,
         output_format=cfg["tts_format"],

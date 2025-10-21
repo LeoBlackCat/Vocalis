@@ -115,7 +115,12 @@ class LLMClient:
             # Add user input to history if it's not empty and add_to_history is True
             if user_input.strip() and add_to_history:
                 self.add_to_history("user", user_input)
-            
+
+            # Log current conversation history state
+            logger.info(f"Conversation history length before extending: {len(self.conversation_history)}")
+            if self.conversation_history:
+                logger.info(f"Conversation history roles: {[msg['role'] for msg in self.conversation_history]}")
+
             # Add conversation history (which now includes the user input if add_to_history=True)
             messages.extend(self.conversation_history)
             
@@ -188,10 +193,13 @@ class LLMClient:
 
             # Extract assistant response
             assistant_message = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-            
+
             # Add assistant response to history (only if we added the user input)
             if assistant_message and add_to_history:
                 self.add_to_history("assistant", assistant_message)
+                logger.info(f"Added assistant response to history. New history length: {len(self.conversation_history)}")
+            else:
+                logger.info(f"NOT adding to history (add_to_history={add_to_history}). History length remains: {len(self.conversation_history)}")
             
             # Calculate processing time
             end_time = logging.Formatter.converter()

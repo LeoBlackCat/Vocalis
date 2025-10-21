@@ -1,7 +1,9 @@
 """
 Text-to-Speech Service
 
-Handles text-to-speech generation using F5-TTS-MLX.
+Handles text-to-speech generation using multiple TTS engines:
+- edge-tts (online, fast, default)
+- F5-TTS-MLX (local, slower, higher quality)
 """
 
 import json
@@ -15,7 +17,7 @@ import soundfile as sf
 import tempfile
 import os
 from pathlib import Path
-from typing import Dict, Any, List, Optional, BinaryIO, Generator, AsyncGenerator
+from typing import Dict, Any, List, Optional, BinaryIO, Generator, AsyncGenerator, Literal
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -23,44 +25,52 @@ logger = logging.getLogger(__name__)
 
 class TTSClient:
     """
-    Client for F5-TTS-MLX text-to-speech generation.
-    
-    This class handles local TTS generation using F5-TTS with MLX on Apple Silicon.
+    Client for text-to-speech generation supporting multiple engines.
+
+    Supports:
+    - edge-tts: Online TTS service (fast, default)
+    - f5-tts: Local F5-TTS-MLX (slower, higher quality)
     """
-    
+
     def __init__(
         self,
+        engine: Literal["edge-tts", "f5-tts"] = "edge-tts",
         model: str = "F5-TTS",
-        voice_file: Optional[str] = None,
-        voice_text: Optional[str] = None,
+        voice: str = "en-US-AriaNeural",  # For edge-tts
+        voice_file: Optional[str] = None,  # For F5-TTS voice cloning
+        voice_text: Optional[str] = None,  # For F5-TTS voice cloning
         output_format: str = "wav",
         sample_rate: int = 24000,
         chunk_size: int = 4096
     ):
         """
-        Initialize the F5-TTS-MLX client.
-        
+        Initialize the TTS client.
+
         Args:
-            model: TTS model name to use (F5-TTS or E2-TTS)
-            voice_file: Path to reference audio file for voice cloning (optional)
-            voice_text: Transcript of the reference audio (optional)
+            engine: TTS engine to use ("edge-tts" or "f5-tts")
+            model: TTS model name for F5-TTS (F5-TTS or E2-TTS)
+            voice: Voice name for edge-tts (e.g., "en-US-AriaNeural")
+            voice_file: Path to reference audio file for F5-TTS voice cloning (optional)
+            voice_text: Transcript of the reference audio for F5-TTS (optional)
             output_format: Output audio format (wav, mp3)
             sample_rate: Audio sample rate (default: 24000)
             chunk_size: Size of audio chunks to stream in bytes
         """
+        self.engine = engine
         self.model = model
+        self.voice = voice
         self.voice_file = voice_file
         self.voice_text = voice_text
         self.output_format = output_format
         self.sample_rate = sample_rate
         self.chunk_size = chunk_size
-        
+
         # State tracking
         self.is_processing = False
         self.last_processing_time = 0
-        self._generate_fn = None
-        
-        logger.info(f"Initialized F5-TTS-MLX Client with model={model}, sample_rate={sample_rate}")
+        self._generate_fn = None  # For F5-TTS lazy loading
+
+        logger.info(f"Initialized TTS Client with engine={engine}, voice/model={voice if engine == 'edge-tts' else model}, sample_rate={sample_rate}")
     
     def _load_model(self):
         """Lazy load the F5-TTS model."""
@@ -75,89 +85,161 @@ class TTSClient:
                     "f5-tts-mlx not installed. Install with: pip install f5-tts-mlx"
                 )
     
-    def text_to_speech(self, text: str) -> bytes:
+    async def _generate_edge_tts(self, text: str) -> bytes:
         """
-        Convert text to speech audio using F5-TTS-MLX.
-        
+        Generate speech using edge-tts (online service).
+
         Args:
             text: Text to convert to speech
-            
+
+        Returns:
+            Audio data as bytes
+        """
+        import edge_tts
+
+        # Create a temporary file for the audio output
+        temp_fd, temp_path = tempfile.mkstemp(suffix='.mp3')
+        os.close(temp_fd)
+
+        try:
+            logger.info(f"Generating edge-tts audio to temporary file: {temp_path}")
+
+            # Create edge-tts Communicate instance
+            communicate = edge_tts.Communicate(text, self.voice)
+
+            # Save to file
+            await communicate.save(temp_path)
+
+            # Read the generated audio file
+            logger.info(f"Reading generated edge-tts audio from: {temp_path}")
+            with open(temp_path, 'rb') as f:
+                audio_data = f.read()
+
+            logger.info(f"Successfully read edge-tts audio file: {len(audio_data)} bytes")
+
+            return audio_data
+
+        finally:
+            # Clean up the temporary file
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+                logger.info(f"Cleaned up temporary file: {temp_path}")
+
+    def _generate_f5_tts(self, text: str) -> bytes:
+        """
+        Generate speech using F5-TTS-MLX (local generation).
+
+        Args:
+            text: Text to convert to speech
+
+        Returns:
+            Audio data as bytes
+        """
+        # Load model if not already loaded
+        self._load_model()
+
+        logger.info(f"Generating F5-TTS for {len(text)} characters of text")
+
+        # Map model name to full model path
+        model_map = {
+            "F5-TTS": "lucasnewman/f5-tts-mlx",
+            "E2-TTS": "lucasnewman/e2-tts-mlx"
+        }
+        model_name = model_map.get(self.model, "lucasnewman/f5-tts-mlx")
+
+        # Generate audio using F5-TTS
+        # F5-TTS generate() doesn't return audio - it either plays or saves to file
+        # We need to specify output_path to prevent auto-playback and get the audio file
+
+        # Create a temporary file for the audio output
+        temp_fd, temp_path = tempfile.mkstemp(suffix='.wav')
+        os.close(temp_fd)  # Close the file descriptor, we'll use the path
+
+        try:
+            # Check for non-empty strings and strip whitespace
+            has_voice_file = self.voice_file and self.voice_file.strip()
+            has_voice_text = self.voice_text and self.voice_text.strip()
+
+            logger.info(f"Generating audio to temporary file: {temp_path}")
+
+            if has_voice_file and has_voice_text:
+                logger.info(f"Using voice cloning with reference: {self.voice_file}")
+                self._generate_fn(
+                    generation_text=text,
+                    ref_audio_path=self.voice_file.strip(),
+                    ref_audio_text=self.voice_text.strip(),
+                    model_name=model_name,
+                    output_path=temp_path  # This prevents auto-playback!
+                )
+            else:
+                # Use default voice
+                logger.info("Using default voice (no voice cloning)")
+                self._generate_fn(
+                    generation_text=text,
+                    model_name=model_name,
+                    output_path=temp_path,  # This prevents auto-playback!
+                    # quantization_bits=4   # keep it commented
+                    steps=8,                # very fast generation, draft quality
+                    cfg_strength=1
+                )
+
+            # Read the generated audio file
+            logger.info(f"Reading generated audio from: {temp_path}")
+            with open(temp_path, 'rb') as f:
+                audio_data = f.read()
+
+            logger.info(f"Successfully read audio file: {len(audio_data)} bytes")
+
+            return audio_data
+
+        finally:
+            # Clean up the temporary file
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+                logger.info(f"Cleaned up temporary file: {temp_path}")
+
+    def text_to_speech(self, text: str) -> bytes:
+        """
+        Convert text to speech audio.
+
+        Routes to the appropriate TTS engine based on configuration.
+
+        Args:
+            text: Text to convert to speech
+
         Returns:
             Audio data as bytes
         """
         self.is_processing = True
         start_time = time.time()
-        
+
         try:
-            # Load model if not already loaded
-            self._load_model()
-            
-            logger.info(f"Generating TTS for {len(text)} characters of text")
-            
-            # Map model name to full model path
-            model_map = {
-                "F5-TTS": "lucasnewman/f5-tts-mlx",
-                "E2-TTS": "lucasnewman/e2-tts-mlx"
-            }
-            model_name = model_map.get(self.model, "lucasnewman/f5-tts-mlx")
-            
-            # Generate audio using F5-TTS
-            # F5-TTS generate() doesn't return audio - it either plays or saves to file
-            # We need to specify output_path to prevent auto-playback and get the audio file
+            logger.info(f"Generating TTS for {len(text)} characters of text using {self.engine}")
 
-            # Create a temporary file for the audio output
-            temp_fd, temp_path = tempfile.mkstemp(suffix='.wav')
-            os.close(temp_fd)  # Close the file descriptor, we'll use the path
+            # Route to appropriate engine
+            if self.engine == "edge-tts":
+                # edge-tts is async, need to run it in event loop
+                import asyncio
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
 
-            try:
-                # Check for non-empty strings and strip whitespace
-                has_voice_file = self.voice_file and self.voice_file.strip()
-                has_voice_text = self.voice_text and self.voice_text.strip()
-
-                logger.info(f"Generating audio to temporary file: {temp_path}")
-
-                if has_voice_file and has_voice_text:
-                    logger.info(f"Using voice cloning with reference: {self.voice_file}")
-                    self._generate_fn(
-                        generation_text=text,
-                        ref_audio_path=self.voice_file.strip(),
-                        ref_audio_text=self.voice_text.strip(),
-                        model_name=model_name,
-                        output_path=temp_path  # This prevents auto-playback!
-                    )
-                else:
-                    # Use default voice
-                    logger.info("Using default voice (no voice cloning)")
-                    self._generate_fn(
-                        generation_text=text,
-                        model_name=model_name,
-                        output_path=temp_path,  # This prevents auto-playback!
-                        # quantization_bits=4   # keep it commented
-                        steps=8,                # very fast generation, draft quality
-                        cfg_strength=1
-                    )
-
-                # Read the generated audio file
-                logger.info(f"Reading generated audio from: {temp_path}")
-                with open(temp_path, 'rb') as f:
-                    audio_data = f.read()
-
-                logger.info(f"Successfully read audio file: {len(audio_data)} bytes")
-
-            finally:
-                # Clean up the temporary file
-                if os.path.exists(temp_path):
-                    os.unlink(temp_path)
-                    logger.info(f"Cleaned up temporary file: {temp_path}")
+                audio_data = loop.run_until_complete(self._generate_edge_tts(text))
+            elif self.engine == "f5-tts":
+                audio_data = self._generate_f5_tts(text)
+            else:
+                raise ValueError(f"Unknown TTS engine: {self.engine}")
 
             # Calculate processing time
             self.last_processing_time = time.time() - start_time
 
             logger.info(f"Generated TTS audio after {self.last_processing_time:.2f}s, "
                        f"size: {len(audio_data)} bytes")
-            
+
             return audio_data
-            
+
         except Exception as e:
             logger.error(f"TTS generation error: {e}")
             raise
@@ -196,34 +278,58 @@ class TTSClient:
     
     async def async_text_to_speech(self, text: str) -> bytes:
         """
-        Asynchronously generate audio data from the TTS API.
-        
-        This method provides asynchronous TTS capability by running
-        the synchronous method in a thread.
-        
+        Asynchronously generate audio data from the TTS engine.
+
+        This method provides asynchronous TTS capability.
+        For edge-tts, it runs natively async.
+        For F5-TTS, it runs the synchronous method in a thread.
+
         Args:
             text: Text to convert to speech
-            
+
         Returns:
             Complete audio data as bytes
         """
+        self.is_processing = True
+        start_time = time.time()
+
         try:
-            # Get complete audio data (text_to_speech already handles is_processing flag)
-            audio_data = await asyncio.to_thread(self.text_to_speech, text)
+            logger.info(f"Generating TTS for {len(text)} characters of text using {self.engine}")
+
+            # Route to appropriate engine
+            if self.engine == "edge-tts":
+                audio_data = await self._generate_edge_tts(text)
+            elif self.engine == "f5-tts":
+                # Run F5-TTS in a thread since it's synchronous
+                audio_data = await asyncio.to_thread(self._generate_f5_tts, text)
+            else:
+                raise ValueError(f"Unknown TTS engine: {self.engine}")
+
+            # Calculate processing time
+            self.last_processing_time = time.time() - start_time
+
+            logger.info(f"Generated TTS audio after {self.last_processing_time:.2f}s, "
+                       f"size: {len(audio_data)} bytes")
+
             return audio_data
+
         except Exception as e:
             logger.error(f"Async TTS error: {e}")
             raise
+        finally:
+            self.is_processing = False
     
     def get_config(self) -> Dict[str, Any]:
         """
         Get the current configuration.
-        
+
         Returns:
             Dict containing the current configuration
         """
         return {
+            "engine": self.engine,
             "model": self.model,
+            "voice": self.voice,
             "voice_file": self.voice_file,
             "voice_text": self.voice_text,
             "output_format": self.output_format,
