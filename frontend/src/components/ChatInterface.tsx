@@ -5,6 +5,7 @@ import BackgroundStars from './BackgroundStars';
 import AssistantOrb from './AssistantOrb';
 import websocketService, { MessageType, ConnectionState } from '../services/websocket';
 import audioService, { AudioEvent, AudioState } from '../services/audio';
+import { holdMusicService } from '../services/holdMusic';
 
 // Assistant state type
 type AssistantState = 'idle' | 'greeting' | 'listening' | 'processing' | 'speaking' | 'vision_file' | 'vision_processing' | 'vision_asr';
@@ -467,12 +468,15 @@ const ChatInterface: React.FC = () => {
       audioService.removeEventListener(AudioEvent.PLAYBACK_START, handlePlaybackStart);
       audioService.removeEventListener(AudioEvent.PLAYBACK_END, handlePlaybackEnd);
       audioService.removeEventListener(AudioEvent.AUDIO_ERROR, () => {});
-      
+
       // Clean up speech activity timeout if it exists
       if (speechActivityTimeout.current) {
         clearTimeout(speechActivityTimeout.current);
       }
-      
+
+      // Clean up hold music
+      holdMusicService.stop();
+
       // Disconnect WebSocket
       websocketService.disconnect();
     };
@@ -481,12 +485,21 @@ const ChatInterface: React.FC = () => {
   // Track previous assistant state changes and sync with audio service
   useEffect(() => {
     setPreviousAssistantState(assistantState);
-    
+
     // Inform audio service about all protected states
     audioService.setProcessingState(assistantState === 'processing');
     audioService.setGreetingState(assistantState === 'greeting');
     audioService.setVisionProcessingState(assistantState === 'vision_processing');
-    
+
+    // Control hold music based on assistant state
+    if (assistantState === 'processing' || assistantState === 'vision_processing') {
+      // Start hold music when processing begins
+      holdMusicService.start();
+    } else {
+      // Stop hold music when processing ends (speaking, idle, listening, etc.)
+      holdMusicService.stop();
+    }
+
     // Cancel listening timeout when moving to processing, speaking, or greeting
     if (assistantState === 'processing' || assistantState === 'speaking' || assistantState === 'greeting') {
       if (listeningTimeout) {
