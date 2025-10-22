@@ -70,19 +70,31 @@ class WebSocketManager:
         self,
         transcriber: WhisperTranscriber,
         llm_client: LLMClient,
-        tts_client: TTSClient
+        tts_client: TTSClient,
+        rag_service: Optional[Any] = None,
+        web_search_service: Optional[Any] = None,
+        rag_config: Optional[Dict[str, Any]] = None,
+        persona_config: Optional[Dict[str, Any]] = None
     ):
         """
         Initialize the WebSocket manager.
-        
+
         Args:
             transcriber: Whisper transcription service
             llm_client: LLM client service
             tts_client: TTS client service
+            rag_service: Optional RAG service for document search
+            web_search_service: Optional web search service
+            rag_config: Optional RAG configuration
+            persona_config: Optional persona configuration
         """
         self.transcriber = transcriber
         self.llm_client = llm_client
         self.tts_client = tts_client
+        self.rag_service = rag_service
+        self.web_search_service = web_search_service
+        self.rag_config = rag_config or {}
+        self.persona_config = persona_config or {}
         
         # State tracking
         self.active_connections: List[WebSocket] = []
@@ -292,30 +304,70 @@ class WebSocketManager:
                 })
                 return
                 
+            # RAG Search (FRESH search on every query)
+            rag_context = None
+            web_context = None
+
+            if self.rag_service:
+                logger.info("Performing RAG search")
+                await self._send_status(websocket, "searching_documents", {})
+
+                # Fresh RAG search for this query
+                rag_results = self.rag_service.search(transcript)
+
+                if rag_results:
+                    # Format RAG context
+                    rag_context = self.rag_service.format_context(rag_results)
+                    logger.info(f"Found {len(rag_results)} RAG results")
+                else:
+                    logger.info("No RAG results found")
+
+                    # If no RAG results and web fallback enabled, search web
+                    if self.rag_config.get("web_fallback") and self.web_search_service:
+                        logger.info("No RAG results, falling back to web search")
+                        await self._send_status(websocket, "searching_web", {})
+
+                        web_results = self.web_search_service.search(transcript, max_results=3)
+                        if web_results:
+                            web_context = self.web_search_service.format_results(web_results)
+                            logger.info(f"Found {len(web_results)} web results")
+
             # Check if we have recent vision context to incorporate
             has_vision_context = self.current_vision_context is not None
-            
+
             if has_vision_context:
                 logger.info("Processing speech with vision context")
-                
+
                 # Add vision context to conversation history
                 self._add_vision_context_to_conversation(self.current_vision_context)
-                
+
                 # Enhance user query with vision context reference
                 enhanced_transcript = f"{transcript} [Note: This question refers to the image I just analyzed.]"
-                
-                # Get LLM response with vision-aware context
+
+                # Get LLM response with vision-aware context + RAG + persona
                 await self._send_status(websocket, "processing_llm", {"has_vision_context": True})
-                llm_response = self.llm_client.get_response(enhanced_transcript, self.system_prompt)
-                
+                llm_response = self.llm_client.get_response(
+                    enhanced_transcript,
+                    self.system_prompt,
+                    rag_context=rag_context,
+                    web_context=web_context,
+                    persona_config=self.persona_config if self.persona_config.get("enabled") else None
+                )
+
                 # Clear vision context after use to avoid affecting future non-vision conversations
                 # Only clear after successful processing
                 self.current_vision_context = None
                 logger.info("Vision context processed and cleared")
             else:
-                # Normal non-vision processing
+                # Normal processing with RAG + persona
                 await self._send_status(websocket, "processing_llm", {})
-                llm_response = self.llm_client.get_response(transcript, self.system_prompt)
+                llm_response = self.llm_client.get_response(
+                    transcript,
+                    self.system_prompt,
+                    rag_context=rag_context,
+                    web_context=web_context,
+                    persona_config=self.persona_config if self.persona_config.get("enabled") else None
+                )
             
             # Send LLM response
             response_text = llm_response["text"]
@@ -470,25 +522,34 @@ class WebSocketManager:
     def _get_greeting_prompt(self, is_returning_user: bool = False) -> str:
         """
         Get the greeting prompt.
-        
+
         Args:
             is_returning_user: Whether this is a returning user
-            
+
         Returns:
             str: The greeting prompt
         """
         user_name = self._get_user_name()
-        
+
+        # Check if RAG is enabled
+        rag_enabled = self.rag_service is not None
+        dataset_name = self.rag_service.get_dataset_name() if rag_enabled else None
+
+        # Build RAG context part
+        rag_part = ""
+        if rag_enabled and dataset_name:
+            rag_part = f" Mention that you're working with {dataset_name} and ask what they'd like to know about."
+
         if user_name:
             if is_returning_user:
-                return f"Create a friendly greeting for {user_name} who just activated their microphone. Be brief and conversational, but treat it like you've met them before. Do not do anything else."
+                return f"Create a friendly greeting for {user_name} who just activated their microphone. Be brief and conversational, but treat it like you've met them before.{rag_part} Do not do anything else."
             else:
-                return f"Create a friendly greeting for {user_name} who just activated their microphone. Be brief and conversational, but treat it like you're meeting them for the first time. Do not do anything else."
+                return f"Create a friendly greeting for {user_name} who just activated their microphone. Be brief and conversational, but treat it like you're meeting them for the first time.{rag_part} Do not do anything else."
         else:
             if is_returning_user:
-                return "Create a friendly greeting for someone who just activated their microphone. Be brief and conversational, but treat it like you've met them before. Do not do anything else."
+                return f"Create a friendly greeting for someone who just activated their microphone. Be brief and conversational, but treat it like you've met them before.{rag_part} Do not do anything else."
             else:
-                return "Create a friendly greeting for someone who just activated their microphone. Be brief and conversational, but treat it like you're meeting them for the first time. Do not do anything else."
+                return f"Create a friendly greeting for someone who just activated their microphone. Be brief and conversational, but treat it like you're meeting them for the first time.{rag_part} Do not do anything else."
     
     def _get_followup_prompt(self, tier: int) -> str:
         """
@@ -1212,19 +1273,35 @@ async def websocket_endpoint(
     websocket: WebSocket,
     transcriber: WhisperTranscriber,
     llm_client: LLMClient,
-    tts_client: TTSClient
+    tts_client: TTSClient,
+    rag_service: Optional[Any] = None,
+    web_search_service: Optional[Any] = None,
+    rag_config: Optional[Dict[str, Any]] = None,
+    persona_config: Optional[Dict[str, Any]] = None
 ):
     """
     FastAPI WebSocket endpoint.
-    
+
     Args:
         websocket: The WebSocket connection
         transcriber: Whisper transcription service
         llm_client: LLM client service
         tts_client: TTS client service
+        rag_service: Optional RAG service
+        web_search_service: Optional web search service
+        rag_config: Optional RAG configuration
+        persona_config: Optional persona configuration
     """
     # Create WebSocket manager
-    manager = WebSocketManager(transcriber, llm_client, tts_client)
+    manager = WebSocketManager(
+        transcriber,
+        llm_client,
+        tts_client,
+        rag_service=rag_service,
+        web_search_service=web_search_service,
+        rag_config=rag_config,
+        persona_config=persona_config
+    )
     
     try:
         # Accept connection

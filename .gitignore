@@ -9,3 +9,9 @@ backend/.env
 # LLM API logs
 logs/
 *.log
+backend/logs/
+
+# RAG data files (don't commit large files)
+*.jsonl
+*.npy
+output/

@@ -4,6 +4,10 @@ Vocalis Backend Server
 FastAPI application entry point.
 """
 
+# Fix OpenMP conflict before importing ML libraries
+import os
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+
 import logging
 import uvicorn
 from fastapi import FastAPI, WebSocket, Depends, HTTPException
@@ -33,6 +37,8 @@ logger = logging.getLogger(__name__)
 transcription_service = None
 llm_service = None
 tts_service = None
+rag_service = None
+web_search_service = None
 # Vision service is a singleton already initialized in its module
 
 @asynccontextmanager
@@ -45,20 +51,21 @@ async def lifespan(app: FastAPI):
     
     # Initialize services on startup
     logger.info("Initializing services...")
-    
-    global transcription_service, llm_service, tts_service
-    
+
+    global transcription_service, llm_service, tts_service, rag_service, web_search_service
+
     # Initialize transcription service
     transcription_service = WhisperTranscriber(
         model_size=cfg["whisper_model"],
         sample_rate=cfg["audio_sample_rate"]
     )
-    
+
     # Initialize LLM service
     llm_service = LLMClient(
-        api_endpoint=cfg["llm_api_endpoint"]
+        api_endpoint=cfg["llm_api_endpoint"],
+        log_dir=cfg["log_dir"]
     )
-    
+
     # Initialize TTS service
     tts_service = TTSClient(
         engine=cfg["tts_engine"],
@@ -69,11 +76,47 @@ async def lifespan(app: FastAPI):
         output_format=cfg["tts_format"],
         sample_rate=cfg["tts_sample_rate"]
     )
-    
+
+    # Initialize RAG service if enabled
+    if cfg["rag_enabled"]:
+        try:
+            logger.info("Initializing RAG service...")
+            from .services.rag import RAGService
+
+            rag_service = RAGService(
+                chunks_path=cfg["rag_chunks_path"],
+                embeddings_path=cfg["rag_embeddings_path"],
+                docs_path=cfg["rag_docs_path"],
+                top_k=cfg["rag_top_k"],
+                dataset_name=cfg["rag_dataset_name"],
+                strict_context=cfg["rag_strict_context"],
+                min_score=cfg["rag_min_score"],
+                log_dir=cfg["log_dir"]
+            )
+            logger.info(f"RAG service initialized with {cfg['rag_dataset_name']}")
+        except Exception as e:
+            logger.error(f"Failed to initialize RAG service: {e}")
+            rag_service = None
+
+    # Initialize web search service if RAG enabled and web fallback enabled
+    if cfg["rag_enabled"] and cfg["rag_web_fallback"]:
+        try:
+            logger.info("Initializing web search service...")
+            from .services.web_search import WebSearchService
+
+            web_search_service = WebSearchService(
+                log_dir=cfg["log_dir"],
+                enabled=True
+            )
+            logger.info("Web search service initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize web search service: {e}")
+            web_search_service = None
+
     # Initialize vision service (will download model if not cached)
     logger.info("Initializing vision service...")
     vision_service.initialize()
-    
+
     logger.info("All services initialized successfully")
     
     yield
@@ -154,11 +197,30 @@ async def get_full_config():
 @app.websocket("/ws")
 async def websocket_route(websocket: WebSocket):
     """WebSocket endpoint for bidirectional audio streaming."""
+    # Prepare RAG and persona configurations
+    cfg = config.get_config()
+
+    rag_config = {
+        "enabled": cfg["rag_enabled"],
+        "web_fallback": cfg["rag_web_fallback"],
+    }
+
+    persona_config = {
+        "enabled": cfg["persona_enabled"],
+        "name": cfg["persona_name"],
+        "style": cfg["persona_style"],
+        "ask_user_name": cfg["persona_ask_user_name"],
+    }
+
     await websocket_endpoint(
-        websocket, 
-        transcription_service, 
-        llm_service, 
-        tts_service
+        websocket,
+        transcription_service,
+        llm_service,
+        tts_service,
+        rag_service=rag_service,
+        web_search_service=web_search_service,
+        rag_config=rag_config,
+        persona_config=persona_config
     )
 
 # Run server directly if executed as script

@@ -36,10 +36,30 @@ VAD_THRESHOLD = float(os.getenv("VAD_THRESHOLD", 0.5))
 VAD_BUFFER_SIZE = int(os.getenv("VAD_BUFFER_SIZE", 30))
 AUDIO_SAMPLE_RATE = int(os.getenv("AUDIO_SAMPLE_RATE", 48000))
 
+# RAG Configuration
+RAG_ENABLED = os.getenv("RAG_ENABLED", "false").lower() == "true"
+RAG_CHUNKS_PATH = os.getenv("RAG_CHUNKS_PATH", "")
+RAG_EMBEDDINGS_PATH = os.getenv("RAG_EMBEDDINGS_PATH", "")
+RAG_DOCS_PATH = os.getenv("RAG_DOCS_PATH", "")
+RAG_TOP_K = int(os.getenv("RAG_TOP_K", 3))
+RAG_DATASET_NAME = os.getenv("RAG_DATASET_NAME", "documents")
+RAG_STRICT_CONTEXT = os.getenv("RAG_STRICT_CONTEXT", "true").lower() == "true"
+RAG_WEB_FALLBACK = os.getenv("RAG_WEB_FALLBACK", "true").lower() == "true"
+RAG_MIN_SCORE = float(os.getenv("RAG_MIN_SCORE", 0.7))
+
+# Persona Configuration
+PERSONA_ENABLED = os.getenv("PERSONA_ENABLED", "false").lower() == "true"
+PERSONA_NAME = os.getenv("PERSONA_NAME", "John Doe")
+PERSONA_STYLE = os.getenv("PERSONA_STYLE", "confident, direct, and enthusiastic")
+PERSONA_ASK_USER_NAME = os.getenv("PERSONA_ASK_USER_NAME", "false").lower() == "true"
+
+# Logging Configuration
+LOG_DIR = os.getenv("LOG_DIR", "backend/logs")
+
 def get_config() -> Dict[str, Any]:
     """
     Returns all configuration settings as a dictionary.
-    
+
     Returns:
         Dict[str, Any]: Dictionary containing all configuration settings
     """
@@ -58,4 +78,18 @@ def get_config() -> Dict[str, Any]:
         "vad_threshold": VAD_THRESHOLD,
         "vad_buffer_size": VAD_BUFFER_SIZE,
         "audio_sample_rate": AUDIO_SAMPLE_RATE,
+        "rag_enabled": RAG_ENABLED,
+        "rag_chunks_path": RAG_CHUNKS_PATH,
+        "rag_embeddings_path": RAG_EMBEDDINGS_PATH,
+        "rag_docs_path": RAG_DOCS_PATH,
+        "rag_top_k": RAG_TOP_K,
+        "rag_dataset_name": RAG_DATASET_NAME,
+        "rag_strict_context": RAG_STRICT_CONTEXT,
+        "rag_web_fallback": RAG_WEB_FALLBACK,
+        "rag_min_score": RAG_MIN_SCORE,
+        "persona_enabled": PERSONA_ENABLED,
+        "persona_name": PERSONA_NAME,
+        "persona_style": PERSONA_STYLE,
+        "persona_ask_user_name": PERSONA_ASK_USER_NAME,
+        "log_dir": LOG_DIR,
     }

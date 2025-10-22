@@ -84,17 +84,22 @@ class LLMClient:
             else:
                 self.conversation_history = self.conversation_history[-50:]
     
-    def get_response(self, user_input: str, system_prompt: Optional[str] = None, 
-                    add_to_history: bool = True, temperature: Optional[float] = None) -> Dict[str, Any]:
+    def get_response(self, user_input: str, system_prompt: Optional[str] = None,
+                    add_to_history: bool = True, temperature: Optional[float] = None,
+                    rag_context: Optional[str] = None, web_context: Optional[str] = None,
+                    persona_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Get a response from the LLM for the given user input.
-        
+
         Args:
             user_input: User's text input
             system_prompt: Optional system prompt to set context
             add_to_history: Whether to add this exchange to conversation history
             temperature: Optional temperature override (0.0 to 1.0)
-            
+            rag_context: Optional RAG context from document search
+            web_context: Optional web search context
+            persona_config: Optional persona configuration dict with keys: name, style, user_name
+
         Returns:
             Dictionary containing the LLM response and metadata
         """
@@ -102,14 +107,22 @@ class LLMClient:
         start_time = logging.Formatter.converter()
         
         try:
+            # Build enhanced system prompt with RAG context and persona
+            final_system_prompt = self._build_system_prompt(
+                system_prompt=system_prompt,
+                rag_context=rag_context,
+                web_context=web_context,
+                persona_config=persona_config,
+            )
+
             # Prepare messages
             messages = []
-            
-            # Add system prompt if provided and not already in history
-            if system_prompt:
+
+            # Add system prompt if built
+            if final_system_prompt:
                 messages.append({
                     "role": "system",
-                    "content": system_prompt
+                    "content": final_system_prompt
                 })
             
             # Add user input to history if it's not empty and add_to_history is True
@@ -244,10 +257,79 @@ class LLMClient:
         finally:
             self.is_processing = False
     
+    def _build_system_prompt(
+        self,
+        system_prompt: Optional[str],
+        rag_context: Optional[str],
+        web_context: Optional[str],
+        persona_config: Optional[Dict[str, Any]],
+    ) -> str:
+        """
+        Build enhanced system prompt with RAG context and persona.
+
+        Args:
+            system_prompt: Base system prompt
+            rag_context: RAG document context
+            web_context: Web search context
+            persona_config: Persona configuration
+
+        Returns:
+            Complete system prompt string
+        """
+        parts = []
+
+        # If persona is enabled, build persona-based prompt
+        if persona_config:
+            persona_name = persona_config.get("name", "")
+            persona_style = persona_config.get("style", "")
+            user_name = persona_config.get("user_name", "")
+
+            user_section = f" with {user_name}" if user_name else " with someone"
+
+            parts.append(f"You are {persona_name}, and you're having a conversation{user_section}.")
+            if persona_style:
+                parts.append(f"Use your signature speaking style: {persona_style}.")
+            parts.append("Draw from your experiences to answer questions.")
+
+        # Add base system prompt if provided and no persona
+        elif system_prompt:
+            parts.append(system_prompt)
+
+        # Add conversation history reference (if we have history)
+        if self.conversation_history:
+            parts.append("\n\nCONVERSATION HISTORY:")
+            for msg in self.conversation_history:
+                role_label = "User" if msg["role"] == "user" else (persona_config.get("name", "Assistant") if persona_config else "Assistant")
+                parts.append(f"{role_label}: {msg['content']}")
+
+        # Add RAG context
+        if rag_context:
+            parts.append("\n\nCONTEXT FROM DOCUMENTS:")
+            parts.append(rag_context)
+
+        # Add web context
+        if web_context:
+            parts.append("\n\nRECENT WEB INFORMATION:")
+            parts.append(web_context)
+
+        # Add response instructions
+        if rag_context or web_context:
+            if persona_config:
+                parts.append("\n\nRespond as you would naturally - be conversational, use 'I', reference your experiences.")
+                parts.append("You can ONLY answer based on the provided context.")
+                parts.append("If the answer isn't in the context, say you don't have that information in your documents.")
+                parts.append("Keep responses concise (2-4 sentences).")
+            else:
+                parts.append("\n\nYou can only answer questions about the provided context.")
+                parts.append("If you know the answer but it is not based on the provided context, do not provide the answer;")
+                parts.append("state that the answer is not in the context provided.")
+
+        return "\n".join(parts) if parts else ""
+
     def clear_history(self, keep_system_prompt: bool = True) -> None:
         """
         Clear conversation history.
-        
+
         Args:
             keep_system_prompt: Whether to keep the system prompt if it exists
         """
