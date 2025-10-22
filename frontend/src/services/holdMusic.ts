@@ -107,6 +107,26 @@ class HoldMusicService {
   }
 
   /**
+   * Play a single beep (used after assistant finishes speaking)
+   */
+  playSingleBeep() {
+    this.initAudioContext();
+
+    // Resume audio context if it was suspended
+    if (this.audioContext?.state === 'suspended') {
+      this.audioContext.resume();
+    }
+
+    if (!this.audioContext || !this.gainNode) return;
+
+    const now = this.audioContext.currentTime;
+    const beepDuration = 0.08; // 80ms, same as hold music
+
+    // Play single beep with same frequency as hold music
+    this.generateBeep(750, beepDuration, now);
+  }
+
+  /**
    * Check if hold music is currently playing
    */
   getIsPlaying(): boolean {

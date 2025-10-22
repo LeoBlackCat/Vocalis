@@ -368,7 +368,7 @@ class WebSocketManager:
             
             # Send LLM response
             response_text = llm_response["text"]
-            logger.info(f"LLM response ({len(response_text)} chars): {response_text[:100]}{'...' if len(response_text) > 100 else ''}")
+            logger.info(f"LLM response ({len(response_text)} chars): {response_text}")
             
             await websocket.send_json({
                 "type": MessageType.LLM_RESPONSE,

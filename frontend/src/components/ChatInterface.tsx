@@ -385,7 +385,10 @@ const ChatInterface: React.FC = () => {
             console.log('Initial greeting playback complete, ending greeting flow protection');
             websocketService.setGreetingFlowState(false);
           }
-          
+
+          // Play single beep after assistant finishes speaking
+          holdMusicService.playSingleBeep();
+
           setAssistantState('idle');
         } else {
           console.log('Playback end event received but still speaking');
