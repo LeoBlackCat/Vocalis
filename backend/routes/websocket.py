@@ -10,7 +10,7 @@ import asyncio
 import numpy as np
 import base64
 import os
-from typing import Dict, Any, List, Optional, AsyncGenerator
+from typing import Dict, Any, List, Optional
 from fastapi import WebSocket, WebSocketDisconnect, BackgroundTasks
 from pydantic import BaseModel
 from datetime import datetime
@@ -52,13 +52,6 @@ class MessageType:
     DELETE_SESSION = "delete_session"
     DELETE_SESSION_RESULT = "delete_session_result"
     
-    # Vision feature message types
-    VISION_SETTINGS = "vision_settings"
-    VISION_SETTINGS_UPDATED = "vision_settings_updated"
-    VISION_FILE_UPLOAD = "vision_file_upload"
-    VISION_FILE_UPLOAD_RESULT = "vision_file_upload_result"
-    VISION_PROCESSING = "vision_processing"
-    VISION_READY = "vision_ready"
 
 class WebSocketManager:
     """
@@ -101,17 +94,14 @@ class WebSocketManager:
         self.speech_buffer = []
         self.current_audio_task = None
         self.interrupt_playback = asyncio.Event()
-        self.current_vision_context = None  # Store the latest vision context
         
         # File paths
         self.prompt_path = os.path.join("prompts", "system_prompt.md")
         self.profile_path = os.path.join("prompts", "user_profile.json")
-        self.vision_settings_path = os.path.join("prompts", "vision_settings.json")
         
-        # Load system prompt, user profile, and vision settings
+        # Load system prompt and user profile
         self.system_prompt = self._load_system_prompt()
         self.user_profile = self._load_user_profile()
-        self.vision_settings = self._load_vision_settings()
         
         # Initialize conversation storage
         self.conversation_storage = ConversationStorage()
@@ -329,42 +319,15 @@ class WebSocketManager:
                             web_context = self.web_search_service.format_results(web_results)
                             logger.info(f"Found {len(web_results)} web results")
 
-            # Check if we have recent vision context to incorporate
-            has_vision_context = self.current_vision_context is not None
-
-            if has_vision_context:
-                logger.info("Processing speech with vision context")
-
-                # Add vision context to conversation history
-                self._add_vision_context_to_conversation(self.current_vision_context)
-
-                # Enhance user query with vision context reference
-                enhanced_transcript = f"{transcript} [Note: This question refers to the image I just analyzed.]"
-
-                # Get LLM response with vision-aware context + RAG + persona
-                await self._send_status(websocket, "processing_llm", {"has_vision_context": True})
-                llm_response = self.llm_client.get_response(
-                    enhanced_transcript,
-                    self.system_prompt,
-                    rag_context=rag_context,
-                    web_context=web_context,
-                    persona_config=self.persona_config if self.persona_config.get("enabled") else None
-                )
-
-                # Clear vision context after use to avoid affecting future non-vision conversations
-                # Only clear after successful processing
-                self.current_vision_context = None
-                logger.info("Vision context processed and cleared")
-            else:
-                # Normal processing with RAG + persona
-                await self._send_status(websocket, "processing_llm", {})
-                llm_response = self.llm_client.get_response(
-                    transcript,
-                    self.system_prompt,
-                    rag_context=rag_context,
-                    web_context=web_context,
-                    persona_config=self.persona_config if self.persona_config.get("enabled") else None
-                )
+            # Normal processing with RAG + persona
+            await self._send_status(websocket, "processing_llm", {})
+            llm_response = self.llm_client.get_response(
+                transcript,
+                self.system_prompt,
+                rag_context=rag_context,
+                web_context=web_context,
+                persona_config=self.persona_config if self.persona_config.get("enabled") else None
+            )
             
             # Send LLM response
             response_text = llm_response["text"]
@@ -811,12 +774,6 @@ class WebSocketManager:
                     audio_bytes = base64.b64decode(audio_base64)
                     await self.handle_audio(websocket, audio_bytes)
                     
-            elif message_type == MessageType.VISION_FILE_UPLOAD:
-                # Handle vision image upload
-                image_base64 = message.get("image_data", "")
-                if image_base64:
-                    await self._handle_vision_file_upload(websocket, image_base64)
-            
             elif message_type == "interrupt":
                 # Handle interrupt request
                 logger.info("Received interrupt request from client")
@@ -858,15 +815,6 @@ class WebSocketManager:
                 # Update user profile
                 name = message.get("name", "")
                 await self._handle_update_user_profile(websocket, name)
-            
-            elif message_type == "get_vision_settings":
-                # Send current vision settings to client
-                await self._handle_get_vision_settings(websocket)
-                
-            elif message_type == "update_vision_settings":
-                # Update vision settings
-                enabled = message.get("enabled", False)
-                await self._handle_update_vision_settings(websocket, enabled)
                 
             # Session management handlers
             elif message_type == MessageType.SAVE_SESSION:
@@ -985,99 +933,6 @@ class WebSocketManager:
             logger.error(f"Error sending system prompt: {e}")
             await self._send_error(websocket, f"Error sending system prompt: {str(e)}")
     
-    def _load_vision_settings(self) -> Dict[str, Any]:
-        """
-        Load vision settings from file or create a default one if it doesn't exist.
-        
-        Returns:
-            Dict[str, Any]: The vision settings
-        """
-        default_settings = {
-            "enabled": False
-        }
-        
-        try:
-            # Create directory if it doesn't exist
-            os.makedirs(os.path.dirname(self.vision_settings_path), exist_ok=True)
-            
-            # Read from file if it exists
-            if os.path.exists(self.vision_settings_path):
-                with open(self.vision_settings_path, "r") as f:
-                    settings = json.load(f)
-                    if settings:  # Only use if not empty
-                        return settings
-            
-            # If file doesn't exist or is empty, write default settings
-            with open(self.vision_settings_path, "w") as f:
-                json.dump(default_settings, f, indent=2)
-            
-            return default_settings
-            
-        except Exception as e:
-            logger.error(f"Error loading vision settings: {e}")
-            return default_settings
-    
-    def _save_vision_settings(self) -> bool:
-        """
-        Save vision settings to file.
-        
-        Returns:
-            bool: Whether the save was successful
-        """
-        try:
-            os.makedirs(os.path.dirname(self.vision_settings_path), exist_ok=True)
-            with open(self.vision_settings_path, "w") as f:
-                json.dump(self.vision_settings, f, indent=2)
-            return True
-        except Exception as e:
-            logger.error(f"Error saving vision settings: {e}")
-            return False
-    
-    async def _handle_get_vision_settings(self, websocket: WebSocket):
-        """
-        Send the current vision settings to the client.
-        
-        Args:
-            websocket: The WebSocket connection
-        """
-        try:
-            await websocket.send_json({
-                "type": MessageType.VISION_SETTINGS,
-                "enabled": self.vision_settings.get("enabled", False),
-                "timestamp": datetime.now().isoformat()
-            })
-            logger.info("Sent vision settings to client")
-        except Exception as e:
-            logger.error(f"Error sending vision settings: {e}")
-            await self._send_error(websocket, f"Error sending vision settings: {str(e)}")
-    
-    async def _handle_update_vision_settings(self, websocket: WebSocket, enabled: bool):
-        """
-        Update the vision settings.
-        
-        Args:
-            websocket: The WebSocket connection
-            enabled: Whether vision is enabled
-        """
-        try:
-            # Update in memory
-            self.vision_settings["enabled"] = enabled
-            
-            # Save to file
-            success = self._save_vision_settings()
-            
-            # Send confirmation
-            await websocket.send_json({
-                "type": MessageType.VISION_SETTINGS_UPDATED,
-                "success": success,
-                "timestamp": datetime.now().isoformat()
-            })
-            
-            logger.info(f"Updated vision settings: enabled={enabled}")
-        except Exception as e:
-            logger.error(f"Error updating vision settings: {e}")
-            await self._send_error(websocket, f"Error updating vision settings: {str(e)}")
-    
     async def _handle_update_system_prompt(self, websocket: WebSocket, new_prompt: str):
         """
         Update the system prompt.
@@ -1112,94 +967,6 @@ class WebSocketManager:
             logger.error(f"Error updating system prompt: {e}")
             await self._send_error(websocket, f"Error updating system prompt: {str(e)}")
             
-    def _add_vision_context_to_conversation(self, vision_context: str):
-        """
-        Add vision context to the conversation history.
-        
-        Args:
-            vision_context: Description of the image from SmolVLM
-        """
-        # Add as a system message to provide context for future exchanges
-        vision_message = {
-            "role": "system",
-            "content": f"[VISION CONTEXT]: {vision_context}"
-        }
-        
-        # If conversation history is empty, add it as the first message
-        # Otherwise, insert after the main system prompt
-        if not self.llm_client.conversation_history:
-            self.llm_client.conversation_history.append(vision_message)
-        else:
-            # Find the last system message that's not a vision context
-            last_system_idx = -1
-            for i, msg in enumerate(self.llm_client.conversation_history):
-                if msg["role"] == "system" and not msg["content"].startswith("[VISION CONTEXT]"):
-                    last_system_idx = i
-            
-            # Insert after the last system message, or at the beginning if none found
-            if last_system_idx >= 0:
-                self.llm_client.conversation_history.insert(last_system_idx + 1, vision_message)
-            else:
-                self.llm_client.conversation_history.insert(0, vision_message)
-    
-    async def _handle_vision_file_upload(self, websocket: WebSocket, image_base64: str):
-        """
-        Handle vision image upload from client.
-        
-        Args:
-            websocket: The WebSocket connection
-            image_base64: Base64-encoded image data
-        """
-        try:
-            # Validate vision is enabled
-            if not self.vision_settings.get("enabled", False):
-                await self._send_error(websocket, "Vision feature is not enabled")
-                return
-                
-            # Notify client that upload was received
-            await websocket.send_json({
-                "type": MessageType.VISION_FILE_UPLOAD_RESULT,
-                "success": True,
-                "timestamp": datetime.now().isoformat()
-            })
-            
-            # Send processing status
-            await websocket.send_json({
-                "type": MessageType.VISION_PROCESSING,
-                "status": "Analyzing image...",
-                "timestamp": datetime.now().isoformat()
-            })
-            
-            # Process image with vision service
-            logger.info("Processing vision image with SmolVLM")
-            
-            # Import vision service (to avoid circular imports)
-            from ..services.vision import vision_service            
-            # Create a descriptive prompt for the image
-            prompt = "Describe this image in detail. Include information about objects, people, scenes, text, and any notable elements."
-            
-            # Process the image (run in a thread pool to not block the event loop)
-            vision_context = await asyncio.to_thread(
-                vision_service.process_image,
-                image_base64,
-                prompt
-            )
-            
-            # Store the vision context for later use in conversation
-            self.current_vision_context = vision_context
-            
-            # Send vision ready notification with the generated context
-            await websocket.send_json({
-                "type": MessageType.VISION_READY,
-                "context": vision_context,
-                "timestamp": datetime.now().isoformat()
-            })
-            
-            logger.info("Vision processing complete with SmolVLM model")
-        except Exception as e:
-            logger.error(f"Error processing vision image: {e}")
-            await self._send_error(websocket, f"Vision processing error: {str(e)}")
-
 async def websocket_endpoint(
     websocket: WebSocket,
     transcriber: WhisperTranscriber,
