@@ -10,7 +10,6 @@ import io  # For BytesIO
 from typing import Dict, Any, List, Optional, Tuple
 from faster_whisper import WhisperModel
 import time
-import torch  # For CUDA availability check
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -36,18 +35,15 @@ class WhisperTranscriber:
         
         Args:
             model_size: Whisper model size (tiny.en, base.en, small.en, medium.en, large)
-            device: Device to run model on ('cpu' or 'cuda'), if None will auto-detect
+            device: Device to run model on ('cpu' or 'cuda'), defaults to 'cpu' when unspecified
             compute_type: Model computation type (int8, int16, float16, float32), if None will select based on device
             beam_size: Beam size for decoding
             sample_rate: Audio sample rate in Hz
         """
         self.model_size = model_size
         
-        # Auto-detect device if not specified
-        if device is None:
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        else:
-            self.device = device
+        # Default to CPU when device not specified (avoids torch dependency)
+        self.device = device or "cpu"
             
         # Select appropriate compute type based on device if not specified
         if compute_type is None:
