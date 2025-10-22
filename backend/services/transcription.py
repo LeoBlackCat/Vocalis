@@ -110,10 +110,20 @@ class WhisperTranscriber:
                     # Not a proper WAV header
                     logger.warning("Received audio data with incorrect WAV header")
                     # Attempt to process as raw data
-                    audio = audio.astype(np.float32) / np.max(np.abs(audio)) if np.max(np.abs(audio)) > 0 else audio
+                    max_val = np.max(np.abs(audio))
+                    if max_val > 0:
+                        audio = audio.astype(np.float32) / max_val
+                    else:
+                        logger.warning("Audio contains only silence, skipping transcription")
+                        return "", {"language": "en", "language_probability": 0.0}
             else:
                 # Normalize audio if it's raw float data
-                audio = audio.astype(np.float32) / np.max(np.abs(audio)) if np.max(np.abs(audio)) > 0 else audio
+                max_val = np.max(np.abs(audio))
+                if max_val > 0:
+                    audio = audio.astype(np.float32) / max_val
+                else:
+                    logger.warning("Audio contains only silence, skipping transcription")
+                    return "", {"language": "en", "language_probability": 0.0}
             
             # Transcribe
             segments, info = self.model.transcribe(

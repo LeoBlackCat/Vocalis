@@ -399,8 +399,6 @@ class WebSocketManager:
             return
         
         try:
-            # Log a concise preview and length
-            logger.info(f"Generating TTS audio for ({len(text)} chars): {text[:100]}{'...' if len(text) > 100 else ''}")
 
             # Signal TTS start
             await websocket.send_json({
@@ -637,7 +635,7 @@ class WebSocketManager:
             
             # Log the greeting response
             greeting_text = llm_response["text"]
-            logger.info(f"Greeting response ({len(greeting_text)} chars): {greeting_text[:100]}{'...' if len(greeting_text) > 100 else ''}")
+            logger.info(f"Greeting response ({len(greeting_text)} chars): {greeting_text}")
             
             # Send LLM response
             await websocket.send_json({
