@@ -39,7 +39,6 @@ class MessageType:
     SYSTEM_PROMPT = "system_prompt"
     SYSTEM_PROMPT_UPDATED = "system_prompt_updated"
     GREETING = "greeting"
-    SILENT_FOLLOWUP = "silent_followup"
     USER_PROFILE = "user_profile"
     USER_PROFILE_UPDATED = "user_profile_updated"
     
@@ -127,13 +126,11 @@ class WebSocketManager:
             str: The system prompt
         """
         default_prompt = (
-            "You are a helpful, friendly, and concise voice assistant."
-            "Respond to user queries in a natural, conversational manner."
-            "Keep responses brief and to the point, as you're communicating via voice."
-            "When providing information, focus on the most relevant details."
-            "If you don't know something, admit it rather than making up an answer"
-            "\n\n"
-            "Through the webapp, you can receive and understand photographs and pictures."
+            "You are a helpful, friendly, and concise voice assistant. "
+            "Respond to user queries in a natural, conversational manner. "
+            "Keep responses brief and to the point, as you're communicating via voice. "
+            "When providing information, focus on the most relevant details. "
+            "If you don't know something, admit it rather than making up an answer."
         )
         
         try:
@@ -656,66 +653,7 @@ class WebSocketManager:
         except Exception as e:
             logger.error(f"Error generating greeting: {e}")
             await self._send_error(websocket, f"Greeting error: {str(e)}")
-    
-    async def _handle_silent_followup(self, websocket: WebSocket, tier: int):
-        """
-        Handle silent follow-up when user doesn't respond.
-        
-        Args:
-            websocket: The WebSocket connection
-            tier: Current follow-up tier (0-2)
-        """
-        try:
-            # Save full conversation history
-            full_history = self.llm_client.conversation_history.copy()
-            
-            # Extract recent conversation context (keeping last few exchanges)
-            context_messages = []
-            
-            # If there's a system message, keep it at the beginning
-            if full_history and full_history[0]["role"] == "system":
-                context_messages.append(full_history[0])
-                recent_history = full_history[1:]
-            else:
-                recent_history = full_history
-            
-            # Include the last several exchanges for context (up to 6 messages)
-            # This provides enough context for a meaningful continuation
-            num_context_messages = min(6, len(recent_history))
-            context_messages.extend(recent_history[-num_context_messages:])
-            
-            # Temporarily set conversation history to just these context messages
-            self.llm_client.conversation_history = context_messages
-            
-            # Select appropriate silence indicator based on tier
-            user_input = "[silent]" if tier == 0 else "[no response]" if tier == 1 else "[still waiting]"
-            
-            # Generate the follow-up with the silence indicator as user input
-            logger.info(f"Generating contextual follow-up (tier {tier+1})")
-            llm_response = self.llm_client.get_response(user_input, self.system_prompt, add_to_history=False, temperature=0.7)
-            
-            # Restore original conversation history
-            self.llm_client.conversation_history = full_history
-            
-            # Log the followup response
-            followup_text = llm_response["text"]
-            logger.info(f"Followup response ({len(followup_text)} chars): {followup_text[:100]}{'...' if len(followup_text) > 100 else ''}")
-            
-            # Send LLM response
-            await websocket.send_json({
-                "type": MessageType.LLM_RESPONSE,
-                "text": followup_text,
-                "metadata": {k: v for k, v in llm_response.items() if k != "text"},
-                "timestamp": datetime.now().isoformat()
-            })
-            
-            # Generate and send TTS audio
-            await self._send_tts_response(websocket, followup_text)
-            
-        except Exception as e:
-            logger.error(f"Error generating silent follow-up: {e}")
-            await self._send_error(websocket, f"Follow-up error: {str(e)}")
-    
+
     async def _handle_save_session(self, websocket: WebSocket, title: Optional[str] = None, session_id: Optional[str] = None):
         """
         Handle save session request.
@@ -901,12 +839,7 @@ class WebSocketManager:
             elif message_type == MessageType.GREETING:
                 # Handle greeting request
                 await self._handle_greeting(websocket)
-                
-            elif message_type == MessageType.SILENT_FOLLOWUP:
-                # Handle silent follow-up
-                tier = message.get("tier", 0)
-                await self._handle_silent_followup(websocket, tier)
-                
+
             elif message_type == "get_system_prompt":
                 # Send current system prompt to client
                 await self._handle_get_system_prompt(websocket)

@@ -74,7 +74,9 @@ async def lifespan(app: FastAPI):
         voice_file=cfg["tts_voice_file"] if cfg["tts_voice_file"] else None,
         voice_text=cfg["tts_voice_text"] if cfg["tts_voice_text"] else None,
         output_format=cfg["tts_format"],
-        sample_rate=cfg["tts_sample_rate"]
+        sample_rate=cfg["tts_sample_rate"],
+        elevenlabs_api_key=cfg["elevenlabs_api_key"] if cfg["elevenlabs_api_key"] else None,
+        elevenlabs_voice_id=cfg["elevenlabs_voice_id"] if cfg["elevenlabs_voice_id"] else None
     )
 
     # Initialize RAG service if enabled
