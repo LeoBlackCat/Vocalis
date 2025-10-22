@@ -52,6 +52,7 @@ PERSONA_ENABLED = os.getenv("PERSONA_ENABLED", "false").lower() == "true"
 PERSONA_NAME = os.getenv("PERSONA_NAME", "John Doe")
 PERSONA_STYLE = os.getenv("PERSONA_STYLE", "confident, direct, and enthusiastic")
 PERSONA_ASK_USER_NAME = os.getenv("PERSONA_ASK_USER_NAME", "false").lower() == "true"
+WEB_SEARCH_PREFIX = os.getenv("WEB_SEARCH_PREFIX", "John Doe")
 
 # Logging Configuration
 LOG_DIR = os.getenv("LOG_DIR", "backend/logs")
@@ -91,5 +92,6 @@ def get_config() -> Dict[str, Any]:
         "persona_name": PERSONA_NAME,
         "persona_style": PERSONA_STYLE,
         "persona_ask_user_name": PERSONA_ASK_USER_NAME,
+        "web_search_prefix": WEB_SEARCH_PREFIX,
         "log_dir": LOG_DIR,
     }

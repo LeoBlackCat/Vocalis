@@ -295,13 +295,6 @@ class LLMClient:
         elif system_prompt:
             parts.append(system_prompt)
 
-        # Add conversation history reference (if we have history)
-        if self.conversation_history:
-            parts.append("\n\nCONVERSATION HISTORY:")
-            for msg in self.conversation_history:
-                role_label = "User" if msg["role"] == "user" else (persona_config.get("name", "Assistant") if persona_config else "Assistant")
-                parts.append(f"{role_label}: {msg['content']}")
-
         # Add RAG context
         if rag_context:
             parts.append("\n\nCONTEXT FROM DOCUMENTS:")

@@ -25,17 +25,19 @@ class WebSearchService:
     Web search service using DuckDuckGo.
     """
 
-    def __init__(self, log_dir: str = "backend/logs", enabled: bool = True):
+    def __init__(self, log_dir: str = "backend/logs", enabled: bool = True, search_prefix: str = ""):
         """
         Initialize web search service.
 
         Args:
             log_dir: Directory to store search logs
             enabled: Whether web search is enabled
+            search_prefix: Prefix to add to all search queries (e.g., persona name)
         """
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.enabled = enabled and DDGS_AVAILABLE
+        self.search_prefix = search_prefix
 
         if not DDGS_AVAILABLE:
             logger.warning("DuckDuckGo search not available - install with: pip install duckduckgo-search")
@@ -56,11 +58,13 @@ class WebSearchService:
             return []
 
         try:
-            logger.info(f"Searching web for: {query}")
+            # Add prefix to query if configured
+            full_query = f"{self.search_prefix} {query}" if self.search_prefix else query
+            logger.info(f"Searching web for: {full_query}")
 
             # Perform search
             search_results = DDGS().text(
-                query,
+                full_query,
                 max_results=max_results,
                 region="us-en",
                 safesearch="moderate",
@@ -69,7 +73,7 @@ class WebSearchService:
             search_results = list(search_results)
 
             # Log the search
-            self._log_search(query, search_results)
+            self._log_search(full_query, search_results)
 
             # Format results
             results = []

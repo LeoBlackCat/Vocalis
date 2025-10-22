@@ -106,7 +106,8 @@ async def lifespan(app: FastAPI):
 
             web_search_service = WebSearchService(
                 log_dir=cfg["log_dir"],
-                enabled=True
+                enabled=True,
+                search_prefix=cfg["web_search_prefix"]
             )
             logger.info("Web search service initialized")
         except Exception as e:
